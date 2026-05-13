@@ -3,5 +3,6 @@
   "start_time": "08:00",
   "end_time": "17:30",
   "nmap_args": "--privileged -sS -n -v -p- -Pn -T3 --min-rate 150 --max-rate 500 --max-retries 3 --stats-every 30s --disable-arp-ping --open",
-  "output_dir": "results"
+  "output_dir": "results",
+  "check_interval_in_seconds": 5
 }

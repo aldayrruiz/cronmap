@@ -6,14 +6,25 @@ import subprocess
 import json
 import time
 import signal
+import re
 from datetime import datetime, timedelta
+
+from merge import HtmlGenerator
+
 
 DB = "state.db"
 
 
 def load_config():
-    with open("config.json") as f:
-        return json.load(f)
+    try:
+        with open("config.json") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print("Error: No se encontró el archivo config.json. Asegúrate de que existe y contiene la configuración necesaria.")
+        exit(1)
+    except json.JSONDecodeError:
+        print("Error: El archivo config.json no es un JSON válido.")
+        exit(1)
 
 
 def within_schedule(config):
@@ -27,6 +38,15 @@ def connect_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def is_database_initialized(conn):
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT 1 FROM batches LIMIT 1")
+        return True
+    except sqlite3.OperationalError:
+        return False
 
 
 def format_duration(seconds):
@@ -174,47 +194,56 @@ def run_scan(config):
         os.makedirs(config["output_dir"], exist_ok=True)
 
     conn = connect_db()
+    if not is_database_initialized(conn):
+        print("Error: La base de datos no está inicializada. Ejecuta 'python scanner.py init' primero.")
+        conn.close()
+        return
+
     print_progress(conn)
 
-    if not within_schedule(config):
-        print("Fuera de horario. Este script solo ejecuta escaneos entre las horas configuradas.")
-        conn.close()
-        return
+    while True:
+        if not within_schedule(config):
+            print("Fuera de horario. Deteniendo el escaneo hasta la próxima ventana horaria.")
+            conn.close()
+            return
 
-    batch_id = get_next_batch(conn)
-    if batch_id is None:
-        print("No hay más lotes pendientes o en progreso.")
-        conn.close()
-        return
+        batch_id = get_next_batch(conn)
+        if batch_id is None:
+            print("No hay más lotes pendientes o en progreso. Escaneo completado.")
+            conn.close()
+            return
 
-    ips = get_batch_ips(conn, batch_id)
-    print(f"Iniciando lote {batch_id} con {len(ips)} IPs...")
-    update_batch_status(conn, batch_id, "in_progress")
+        ips = get_batch_ips(conn, batch_id)
+        print(f"Iniciando lote {batch_id} con {len(ips)} IPs...")
+        update_batch_status(conn, batch_id, "in_progress")
 
-    process, output_file = run_nmap(ips, config, batch_id)
-    update_batch_status(conn, batch_id, "in_progress", output_file=output_file)
+        process, output_file = run_nmap(ips, config, batch_id)
+        update_batch_status(conn, batch_id, "in_progress", output_file=output_file)
 
-    try:
-        while True:
-            if process.poll() is not None:
-                print(f"Lote {batch_id} completado.")
-                update_batch_status(conn, batch_id, "done")
-                break
+        try:
+            while True:
+                if process.poll() is not None:
+                    print(f"Lote {batch_id} completado.")
+                    update_batch_status(conn, batch_id, "done")
+                    break
 
-            if not within_schedule(config):
-                print("Fuera de horario, parando el escaneo y marcando el lote como pendiente para reanudación futura.")
-                process.send_signal(signal.SIGINT)
-                update_batch_status(conn, batch_id, "pending", output_file=output_file)
-                break
+                if not within_schedule(config):
+                    print("Fuera de horario, parando el escaneo y marcando el lote como pendiente para reanudación futura.")
+                    process.send_signal(signal.SIGINT)
+                    update_batch_status(conn, batch_id, "pending", output_file=output_file)
+                    conn.close()
+                    return
 
-            time.sleep(1)
+                time.sleep(config.get("check_interval_in_seconds", 5))
 
-    except KeyboardInterrupt:
-        print("Interrupción manual. Terminando proceso y dejando el lote como pendiente.")
-        process.terminate()
-        update_batch_status(conn, batch_id, "pending", output_file=output_file)
+        except KeyboardInterrupt:
+            print("Interrupción manual. Terminando proceso y dejando el lote como pendiente.")
+            process.terminate()
+            update_batch_status(conn, batch_id, "pending", output_file=output_file)
+            conn.close()
+            return
 
-    conn.close()
+        print_progress(conn)  # Print progress after each batch
 
 
 def main():
@@ -224,6 +253,7 @@ def main():
     subparsers.add_parser("init", help="Inicializar la base de datos y crear lotes desde targets.txt")
     subparsers.add_parser("status", help="Mostrar resumen y progreso de los lotes")
     subparsers.add_parser("run", help="Ejecutar el siguiente lote pendiente o reanudar un lote en progreso")
+    subparsers.add_parser("html", help="Fusionar XMLs y generar reporte HTML")
 
     args = parser.parse_args()
     config = load_config()
@@ -232,8 +262,15 @@ def main():
         init_database(config)
     elif args.command == "status":
         conn = connect_db()
+        if not is_database_initialized(conn):
+            print("Error: La base de datos no está inicializada. Ejecuta 'python scanner.py init' primero.")
+            conn.close()
+            return
         print_progress(conn)
         conn.close()
+    elif args.command == "html":
+            generator = HtmlGenerator(output_dir=config["output_dir"])
+            generator.generate_html_report()
     else:
         run_scan(config)
 
