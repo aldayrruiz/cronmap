@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timedelta
 
 from merge import HtmlGenerator
+from summary import SummaryGenerator
 
 
 DB = "state.db"
@@ -202,7 +203,7 @@ def run_scan(config):
     print_progress(conn)
 
     while True:
-        if not within_schedule(config):
+        if config.get("enable_schedule", True) and not within_schedule(config):
             print("Fuera de horario. Deteniendo el escaneo hasta la próxima ventana horaria.")
             conn.close()
             return
@@ -227,7 +228,7 @@ def run_scan(config):
                     update_batch_status(conn, batch_id, "done")
                     break
 
-                if not within_schedule(config):
+                if config.get("enable_schedule", True) and not within_schedule(config):
                     print("Fuera de horario, parando el escaneo y marcando el lote como pendiente para reanudación futura.")
                     process.send_signal(signal.SIGINT)
                     update_batch_status(conn, batch_id, "pending", output_file=output_file)
@@ -254,6 +255,8 @@ def main():
     subparsers.add_parser("status", help="Mostrar resumen y progreso de los lotes")
     subparsers.add_parser("run", help="Ejecutar el siguiente lote pendiente o reanudar un lote en progreso")
     subparsers.add_parser("html", help="Fusionar XMLs y generar reporte HTML")
+    summary_parser = subparsers.add_parser("summary", help="Mostrar resumen de IPs y puertos desde merged.xml")
+    summary_parser.add_argument("--string-port-separator", type=str, default=",", help="Separador para los puertos (default: ,)")
 
     args = parser.parse_args()
     config = load_config()
@@ -271,6 +274,12 @@ def main():
     elif args.command == "html":
             generator = HtmlGenerator(output_dir=config["output_dir"])
             generator.generate_html_report()
+    elif args.command == "summary":
+            generator = SummaryGenerator(output_dir=config["output_dir"])
+            separator = args.string_port_separator
+            summary = generator.generate_port_summary(separator=separator)
+            if summary:
+                print(summary)
     else:
         run_scan(config)
 
