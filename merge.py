@@ -133,3 +133,35 @@ class HtmlGenerator:
         print(f"[+] Fusión completada: {hosts_total} hosts ({hosts_up} activos, {hosts_down} inactivos)")
         print(f"[+] Total IPs escaneadas: {len(all_ips)}")
         return merged_path
+
+    def generate_html_report(self):
+        """
+        Genera un reporte HTML a partir del XML fusionado usando xsltproc.
+        """
+        output_dir = self.output_dir
+        merged_xml = os.path.join(output_dir, "merged.xml")
+        output_html = os.path.join(output_dir, "results.html")
+        
+        # First, merge the XML files
+        print("Fusionando archivos XML...")
+        self.merge_xml_files()
+        
+        if not os.path.exists(merged_xml):
+            print("Error: No se encontró el archivo merged.xml")
+            return False
+        
+        # Generate HTML using xsltproc
+        print("Generando reporte HTML...")
+        try:
+            cmd = ["xsltproc", merged_xml, "-o", output_html]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            
+            if result.returncode == 0:
+                print(f"[+] Reporte HTML generado: {output_html}")
+                return True
+            else:
+                print(f"Error al generar HTML: {result.stderr}")
+                return False
+        except FileNotFoundError:
+            print("Error: xsltproc no está instalado. Instálalo con: sudo apt-get install xsltproc")
+            return False
