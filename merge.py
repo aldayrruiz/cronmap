@@ -6,6 +6,8 @@ from copy import deepcopy
 from datetime import datetime
 import os
 import re
+import subprocesos
+
 
 class HtmlGenerator:
     def __init__(self, output_dir="results"):
